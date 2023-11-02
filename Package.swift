@@ -1,5 +1,6 @@
-// swift-tools-version:5.6
+// swift-tools-version:5.7
 import PackageDescription
+import Foundation
 
 let package = Package(
     name: "vapor",
@@ -15,16 +16,16 @@ let package = Package(
     ],
     dependencies: [
         // HTTP client library built on SwiftNIO
-        .package(url: "https://github.com/swift-server/async-http-client.git", from: "1.18.0"),
+        .package(url: "https://github.com/swift-server/async-http-client.git", from: "1.19.0"),
 
         // Sugary extensions for the SwiftNIO library
         .package(url: "https://github.com/vapor/async-kit.git", from: "1.15.0"),
 
         // 💻 APIs for creating interactive CLI tools.
-        .package(url: "https://github.com/vapor/console-kit.git", from: "4.0.0"),
+        .package(url: "https://github.com/vapor/console-kit.git", from: "4.9.0"),
 
         // 🔑 Hashing (SHA2, HMAC), encryption (AES), public-key (RSA), and random data generation.
-        .package(url: "https://github.com/apple/swift-crypto.git", "1.0.0" ..< "3.0.0"),
+        .package(url: "https://github.com/apple/swift-crypto.git", "1.0.0" ..< "4.0.0"),
 
         // 🚍 High-performance trie-node router.
         .package(url: "https://github.com/vapor/routing-kit.git", from: "4.5.0"),
@@ -33,13 +34,13 @@ let package = Package(
         .package(url: "https://github.com/swift-server/swift-backtrace.git", from: "1.1.1"),
         
         // Event-driven network application framework for high performance protocol servers & clients, non-blocking.
-        .package(url: "https://github.com/apple/swift-nio.git", from: "2.56.0"),
+        .package(url: "https://github.com/apple/swift-nio.git", from: "2.59.0"),
         
         // Bindings to OpenSSL-compatible libraries for TLS support in SwiftNIO
         .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.8.0"),
         
         // HTTP/2 support for SwiftNIO
-        .package(url: "https://github.com/apple/swift-nio-http2.git", from: "1.20.0"),
+        .package(url: "https://github.com/apple/swift-nio-http2.git", from: "1.28.0"),
         
         // Useful code around SwiftNIO.
         .package(url: "https://github.com/apple/swift-nio-extras.git", from: "1.19.0"),
@@ -54,10 +55,13 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-algorithms.git", from: "1.0.0"),
 
         // WebSocket client library built on SwiftNIO
-        .package(url: "https://github.com/vapor/websocket-kit.git", from: "2.0.0"),
+        .package(url: "https://github.com/vapor/websocket-kit.git", from: "2.13.0"),
         
         // MultipartKit, Multipart encoding and decoding
         .package(url: "https://github.com/vapor/multipart-kit.git", from: "4.2.1"),
+        
+        // Low-level atomic operations
+        .package(url: "https://github.com/apple/swift-atomics.git", from: "1.1.0"),
     ],
     targets: [
         // C helpers
@@ -89,6 +93,7 @@ let package = Package(
             .product(name: "RoutingKit", package: "routing-kit"),
             .product(name: "WebSocketKit", package: "websocket-kit"),
             .product(name: "MultipartKit", package: "multipart-kit"),
+            .product(name: "Atomics", package: "swift-atomics"),
         ]),
 	
         // Development
@@ -97,15 +102,7 @@ let package = Package(
             dependencies: [
                 .target(name: "Vapor"),
             ],
-            resources: [.copy("Resources")],
-            swiftSettings: [
-                // Enable better optimizations when building in Release configuration. Despite the use of
-                // the `.unsafeFlags` construct required by SwiftPM, this flag is recommended for Release
-                // builds. See <https://github.com/swift-server/guides#building-for-production> for details.
-                .unsafeFlags([
-                    "-cross-module-optimization"
-                ], .when(configuration: .release)),
-            ]
+            resources: [.copy("Resources")]
         ),
 
         // Testing

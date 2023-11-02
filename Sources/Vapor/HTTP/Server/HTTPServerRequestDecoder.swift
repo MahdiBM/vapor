@@ -133,6 +133,10 @@ final class HTTPServerRequestDecoder: ChannelDuplexHandler, RemovableChannelHand
         default:
             break
         }
+
+        if error is HTTPParserError {
+            self.logger.debug("Invalid HTTP request, will close connection: \(String(reflecting: error))")
+        }
         context.fireErrorCaught(error)
     }
 
@@ -158,19 +162,21 @@ final class HTTPServerRequestDecoder: ChannelDuplexHandler, RemovableChannelHand
         switch result.action {
         case .nothing: break
         case .write(let buffer):
+            let box = NIOLoopBound((context, self), eventLoop: context.eventLoop)
             stream.write(.buffer(buffer)).whenComplete { writeResult in
+                let (context, handler) = box.value
                 switch writeResult {
                 case .failure(let error):
-                    self.handleBodyStreamStateResult(
+                    handler.handleBodyStreamStateResult(
                         context: context,
-                        self.bodyStreamState.didError(error),
+                        handler.bodyStreamState.didError(error),
                         stream: stream
                     )
                 case .success: break
                 }
-                self.handleBodyStreamStateResult(
+                handler.handleBodyStreamStateResult(
                     context: context,
-                    self.bodyStreamState.didWrite(),
+                    handler.bodyStreamState.didWrite(),
                     stream: stream
                 )
             }
@@ -216,7 +222,7 @@ final class HTTPServerRequestDecoder: ChannelDuplexHandler, RemovableChannelHand
                 context.fireUserInboundEventTriggered(event)
             }
         default:
-            self.logger.trace("Unhandled user event: \(event)")
+            context.fireUserInboundEventTriggered(event)
         }
     }
 }

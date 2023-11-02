@@ -39,7 +39,7 @@ public final class Request: CustomStringConvertible {
     ///
     public var route: Route?
 
-    /// We try to determine true peer address if load balacer or reversed proxy provided info in headers
+    /// We try to determine true peer address if load balancer or reversed proxy provided info in headers
     ///
     /// Priority of getting value from headers is as following:
     ///
@@ -153,7 +153,7 @@ public final class Request: CustomStringConvertible {
     
     internal var bodyStorage: BodyStorage
     
-    /// Get and set `HTTPCookies` for this `HTTPRequest`
+    /// Get and set `HTTPCookies` for this `Request`
     /// This accesses the `"Cookie"` header.
     public var cookies: HTTPCookies {
         get {
@@ -250,7 +250,11 @@ public final class Request: CustomStringConvertible {
         self.storage = .init()
         self.isKeepAlive = true
         self.logger = logger
-        self.logger[metadataKey: "request-id"] = .string(id)
+        if let requestId = self.headers[.xRequestId].first {
+            self.logger[metadataKey: "request-id"] = .string(requestId)
+        } else {
+            self.logger[metadataKey: "request-id"] = .string(UUID().uuidString)
+        }
         self.byteBufferAllocator = byteBufferAllocator
     }
 }
