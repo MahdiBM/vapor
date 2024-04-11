@@ -28,7 +28,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-crypto.git", "1.0.0" ..< "4.0.0"),
 
         // 🚍 High-performance trie-node router.
-        .package(url: "https://github.com/vapor/routing-kit.git", from: "4.5.0"),
+        .package(url: "https://github.com/vapor/routing-kit.git", from: "4.9.0"),
 
         // Event-driven network application framework for high performance protocol servers & clients, non-blocking.
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.62.0"),
@@ -127,17 +127,6 @@ let package = Package(
                 .copy("Utilities/my-secret-env-content"),
                 .copy("Utilities/expired.crt"),
                 .copy("Utilities/expired.key"),
-            ],
-            swiftSettings: [
-                .enableUpcomingFeature("BareSlashRegexLiterals"),
-                .enableExperimentalFeature("StrictConcurrency=complete"),
-            ]
-        ),
-        .testTarget(
-            name: "AsyncTests",
-            dependencies: [
-                .product(name: "NIOTestUtils", package: "swift-nio"),
-                .target(name: "XCTVapor"),
             ],
             swiftSettings: [
                 .enableUpcomingFeature("BareSlashRegexLiterals"),
