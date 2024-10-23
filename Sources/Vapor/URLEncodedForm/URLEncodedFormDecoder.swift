@@ -16,11 +16,11 @@ import NIOHTTP1
 ///
 /// See [the offical WhatWG URL standard](https://url.spec.whatwg.org/#application/x-www-form-urlencoded) for more
 /// information about the "URL-encoded WWW form" format.
-public struct URLEncodedFormDecoder: ContentDecoder, URLQueryDecoder {
+public struct URLEncodedFormDecoder: ContentDecoder, URLQueryDecoder, Sendable {
     /// Ecapsulates configuration options for URL-encoded form decoding.
-    public struct Configuration {
+    public struct Configuration: Sendable {
         /// Supported date formats
-        public enum DateDecodingStrategy {
+        public enum DateDecodingStrategy: Sendable {
             /// Decodes integer or floating-point values expressed as seconds since the UNIX
             /// epoch (`1970-01-01 00:00:00.000Z`).
             case secondsSince1970
@@ -29,7 +29,7 @@ public struct URLEncodedFormDecoder: ContentDecoder, URLQueryDecoder {
             case iso8601
 
             /// Invokes a custom callback to decode values when a date is requested.
-            case custom((Decoder) throws -> Date)
+            case custom(@Sendable (Decoder) throws -> Date)
         }
 
         let boolFlags: Bool
@@ -212,7 +212,7 @@ private struct _Decoder: Decoder {
         var configuration: URLEncodedFormDecoder.Configuration
 
         var allKeys: [Key] {
-            self.data.children.keys.compactMap { Key(stringValue: String($0)) }
+            (self.data.children.keys + self.data.values.compactMap { try? $0.asUrlDecoded() }).compactMap { Key(stringValue: String($0)) }
         }
         
         init(
@@ -226,11 +226,11 @@ private struct _Decoder: Decoder {
         }
         
         func contains(_ key: Key) -> Bool {
-            self.data.children[key.stringValue] != nil
+            self.data.children[key.stringValue] != nil || self.data.values.contains(.init(stringLiteral: key.stringValue))
         }
         
         func decodeNil(forKey key: Key) throws -> Bool {
-            self.data.children[key.stringValue] == nil
+            self.data.children[key.stringValue] == nil && !self.data.values.contains(.init(stringLiteral: key.stringValue))
         }
         
         private func decodeDate(forKey key: Key, child: URLEncodedFormData) throws -> Date {
@@ -357,6 +357,14 @@ private struct _Decoder: Decoder {
                         .split(omittingEmptySubsequences: false, whereSeparator: configuration.arraySeparators.contains)
                         .map { .urlEncoded(.init($0)) }
                 }
+
+                if self.values.isEmpty && !data.children.isEmpty {
+                    let context = DecodingError.Context(
+                        codingPath: codingPath,
+                        debugDescription: "Expected an array but could not parse the data as an array"
+                    )
+                    throw DecodingError.dataCorrupted(context)
+                }
             }
         }
         
@@ -366,6 +374,14 @@ private struct _Decoder: Decoder {
 
         mutating func decode<T: Decodable>(_: T.Type) throws -> T {
             defer { self.currentIndex += 1 }
+            
+            guard !isAtEnd else {
+                let context = DecodingError.Context(
+                    codingPath: self.codingPath,
+                    debugDescription: "Unkeyed container is at end."
+                )
+                throw DecodingError.valueNotFound(T.self, context)
+            }
             
             if self.allChildKeysAreNumbers {
                 // We can force-unwrap because we already checked data.allChildKeysAreNumbers in the initializer.
@@ -490,7 +506,7 @@ private extension URLEncodedFormDecoder.Configuration {
             let decoder = _Decoder(data: data, codingPath: newCodingPath, configuration: self)
             let container = try decoder.singleValueContainer()
 
-            guard let date = ISO8601DateFormatter.threadSpecific.date(from: try container.decode(String.self)) else {
+            guard let date = ISO8601DateFormatter().date(from: try container.decode(String.self)) else {
                 throw DecodingError.dataCorrupted(.init(codingPath: newCodingPath, debugDescription: "Unable to decode ISO-8601 date."))
             }
             return date

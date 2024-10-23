@@ -48,23 +48,34 @@ public final class HTTPServer: Server, Sendable {
         
         /// Port the server will bind to.
         public var port: Int {
-           get {
-               switch address {
-               case .hostname(_, let port):
-                   return port ?? Self.defaultPort
-               default:
-                   return Self.defaultPort
-               }
-           }
-           set {
-               switch address {
-               case .hostname(let hostname, _):
-                   address = .hostname(hostname, port: newValue)
-               default:
-                   address = .hostname(nil, port: newValue)
-               }
-           }
-       }
+            get {
+                switch address {
+                case .hostname(_, let port):
+                    return port ?? Self.defaultPort
+                default:
+                    return Self.defaultPort
+                }
+            }
+            set {
+                switch address {
+                case .hostname(let hostname, _):
+                    address = .hostname(hostname, port: newValue)
+                default:
+                    address = .hostname(nil, port: newValue)
+                }
+            }
+        }
+        
+        /// A human-readable description of the configured address. Used in log messages when starting server.
+        var addressDescription: String {
+            let scheme = tlsConfiguration == nil ? "http" : "https"
+            switch address {
+            case .hostname(let hostname, let port):
+                return "\(scheme)://\(hostname ?? Self.defaultHostname):\(port ?? Self.defaultPort)"
+            case .unixDomainSocket(let socketPath):
+                return "\(scheme)+unix: \(socketPath)"
+            }
+        }
         
         /// Listen backlog.
         public var backlog: Int
@@ -76,66 +87,10 @@ public final class HTTPServer: Server, Sendable {
         public var tcpNoDelay: Bool
 
         /// Response compression configuration.
-        public var responseCompression: CompressionConfiguration
-
-        /// Supported HTTP compression options.
-        public struct CompressionConfiguration: Sendable {
-            /// Disables compression. This is the default.
-            public static var disabled: Self {
-                .init(storage: .disabled)
-            }
-
-            /// Enables compression with default configuration.
-            public static var enabled: Self {
-                .enabled(initialByteBufferCapacity: 1024)
-            }
-
-            /// Enables compression with custom configuration.
-            public static func enabled(
-                initialByteBufferCapacity: Int
-            ) -> Self {
-                .init(storage: .enabled(
-                    initialByteBufferCapacity: initialByteBufferCapacity
-                ))
-            }
-
-            enum Storage {
-                case disabled
-                case enabled(initialByteBufferCapacity: Int)
-            }
-
-            var storage: Storage
-        }
+        public var responseCompression: ResponseCompressionConfiguration
 
         /// Request decompression configuration.
-        public var requestDecompression: DecompressionConfiguration
-
-        /// Supported HTTP decompression options.
-        public struct DecompressionConfiguration: Sendable {
-            /// Disables decompression. This is the default option.
-            public static var disabled: Self {
-                .init(storage: .disabled)
-            }
-
-            /// Enables decompression with default configuration.
-            public static var enabled: Self {
-                .enabled(limit: .ratio(10))
-            }
-
-            /// Enables decompression with custom configuration.
-            public static func enabled(
-                limit: NIOHTTPDecompression.DecompressionLimit
-            ) -> Self {
-                .init(storage: .enabled(limit: limit))
-            }
-
-            enum Storage {
-                case disabled
-                case enabled(limit: NIOHTTPDecompression.DecompressionLimit)
-            }
-
-            var storage: Storage
-        }
+        public var requestDecompression: RequestDecompressionConfiguration
         
         /// When `true`, HTTP server will support pipelined requests.
         public var supportPipelining: Bool
@@ -160,6 +115,14 @@ public final class HTTPServer: Server, Sendable {
         /// This is the same as `NIOSSLCustomVerificationCallback` but just marked as `Sendable`
         @preconcurrency
         public var customCertificateVerifyCallback: (@Sendable ([NIOSSLCertificate], EventLoopPromise<NIOSSLVerificationResult>) -> Void)?
+        
+        /// The number of incoming TCP connections to accept per "tick" (i.e. each time through the server's event loop).
+        ///
+        /// Most users will never need to change this value; its primary use case is to work around benchmarking
+        /// artifacts where bursts of connections are created within extremely small intervals. See
+        /// https://forums.swift.org/t/standard-vapor-website-drops-1-5-of-requests-even-at-concurrency-of-100/71583/49
+        /// for additional information.
+        public var connectionsPerServerTick: UInt
 
         public init(
             hostname: String = Self.defaultHostname,
@@ -167,15 +130,17 @@ public final class HTTPServer: Server, Sendable {
             backlog: Int = 256,
             reuseAddress: Bool = true,
             tcpNoDelay: Bool = true,
-            responseCompression: CompressionConfiguration = .disabled,
-            requestDecompression: DecompressionConfiguration = .disabled,
+            responseCompression: ResponseCompressionConfiguration = .disabled,
+            requestDecompression: RequestDecompressionConfiguration = .enabled,
             supportPipelining: Bool = true,
             supportVersions: Set<HTTPVersionMajor>? = nil,
             tlsConfiguration: TLSConfiguration? = nil,
             serverName: String? = nil,
             reportMetrics: Bool = true,
             logger: Logger? = nil,
-            shutdownTimeout: TimeAmount = .seconds(10)
+            shutdownTimeout: TimeAmount = .seconds(10),
+            customCertificateVerifyCallback: (@Sendable ([NIOSSLCertificate], EventLoopPromise<NIOSSLVerificationResult>) -> Void)? = nil,
+            connectionsPerServerTick: UInt = 256
         ) {
             self.init(
                 address: .hostname(hostname, port: port),
@@ -190,24 +155,28 @@ public final class HTTPServer: Server, Sendable {
                 serverName: serverName,
                 reportMetrics: reportMetrics,
                 logger: logger,
-                shutdownTimeout: shutdownTimeout
+                shutdownTimeout: shutdownTimeout,
+                customCertificateVerifyCallback: customCertificateVerifyCallback,
+                connectionsPerServerTick: connectionsPerServerTick
             )
         }
-        
+
         public init(
             address: BindAddress,
             backlog: Int = 256,
             reuseAddress: Bool = true,
             tcpNoDelay: Bool = true,
-            responseCompression: CompressionConfiguration = .disabled,
-            requestDecompression: DecompressionConfiguration = .disabled,
+            responseCompression: ResponseCompressionConfiguration = .disabled,
+            requestDecompression: RequestDecompressionConfiguration = .enabled,
             supportPipelining: Bool = true,
             supportVersions: Set<HTTPVersionMajor>? = nil,
             tlsConfiguration: TLSConfiguration? = nil,
             serverName: String? = nil,
             reportMetrics: Bool = true,
             logger: Logger? = nil,
-            shutdownTimeout: TimeAmount = .seconds(10)
+            shutdownTimeout: TimeAmount = .seconds(10),
+            customCertificateVerifyCallback: (@Sendable ([NIOSSLCertificate], EventLoopPromise<NIOSSLVerificationResult>) -> Void)? = nil,
+            connectionsPerServerTick: UInt = 256
         ) {
             self.address = address
             self.backlog = backlog
@@ -226,7 +195,8 @@ public final class HTTPServer: Server, Sendable {
             self.reportMetrics = reportMetrics
             self.logger = logger ?? Logger(label: "codes.vapor.http-server")
             self.shutdownTimeout = shutdownTimeout
-            self.customCertificateVerifyCallback = nil
+            self.customCertificateVerifyCallback = customCertificateVerifyCallback
+            self.connectionsPerServerTick = connectionsPerServerTick
         }
     }
     
@@ -258,6 +228,7 @@ public final class HTTPServer: Server, Sendable {
             let canBeUpdatedDynamically =
                 oldValue.address == newValue.address
                 && oldValue.backlog == newValue.backlog
+                && oldValue.connectionsPerServerTick == newValue.connectionsPerServerTick
                 && oldValue.reuseAddress == newValue.reuseAddress
                 && oldValue.tcpNoDelay == newValue.tcpNoDelay
             
@@ -293,6 +264,7 @@ public final class HTTPServer: Server, Sendable {
         self.connection = .init(nil)
     }
     
+    @available(*, noasync, message: "Use the async start() method instead.")
     public func start(address: BindAddress?) throws {
         var configuration = self.configuration
         
@@ -307,19 +279,10 @@ public final class HTTPServer: Server, Sendable {
             /// Override the socket path.
             configuration.address = address!
         }
-        
-        /// Print starting message.
-        let scheme = configuration.tlsConfiguration == nil ? "http" : "https"
-        let addressDescription: String
-        switch configuration.address {
-        case .hostname(let hostname, let port):
-            addressDescription = "\(scheme)://\(hostname ?? configuration.hostname):\(port ?? configuration.port)"
-        case .unixDomainSocket(let socketPath):
-            addressDescription = "\(scheme)+unix: \(socketPath)"
-        }
-        
-        self.configuration.logger.notice("Server starting on \(addressDescription)")
 
+        /// Log starting message for debugging before attempting to start the server.
+        configuration.logger.debug("Server starting on \(configuration.addressDescription)")
+        
         /// Start the actual `HTTPServer`.
         try self.connection.withLockedValue {
             $0 = try HTTPServerConnection.start(
@@ -331,10 +294,73 @@ public final class HTTPServer: Server, Sendable {
             ).wait()
         }
 
+        /// Overwrite configuration with actual address, if applicable.
+        /// They may differ from the provided configuation if port 0 was provided, for example.
+        if let localAddress = self.localAddress {
+            if let hostname = localAddress.hostname, let port = localAddress.port {
+                configuration.address = .hostname(hostname, port: port)
+            } else if let pathname = localAddress.pathname {
+                configuration.address = .unixDomainSocket(path: pathname)
+            }
+        }
+
+        /// Log started message with the actual configuration.
+        configuration.logger.notice("Server started on \(configuration.addressDescription)")
+
         self.configuration = configuration
         self.didStart.withLockedValue { $0 = true }
     }
     
+    public func start(address: BindAddress?) async throws {
+        var configuration = self.configuration
+        
+        switch address {
+        case .none:
+            /// Use the configuration as is.
+            break
+        case .hostname(let hostname, let port):
+            /// Override the hostname, port, neither, or both.
+            configuration.address = .hostname(hostname ?? configuration.hostname, port: port ?? configuration.port)
+        case .unixDomainSocket:
+            /// Override the socket path.
+            configuration.address = address!
+        }
+        
+        /// Log starting message for debugging before attempting to start the server.
+        configuration.logger.debug("Server starting on \(configuration.addressDescription)")
+
+        /// Start the actual `HTTPServer`.
+        let serverConnection = try await HTTPServerConnection.start(
+            application: self.application,
+            server: self,
+            responder: self.responder,
+            configuration: configuration,
+            on: self.eventLoopGroup
+        ).get()
+        
+        self.connection.withLockedValue {
+            precondition($0 == nil, "You can't start the server connection twice")
+            $0 = serverConnection
+        }
+        
+        /// Overwrite configuration with actual address, if applicable.
+        /// They may differ from the provided configuation if port 0 was provided, for example.
+        if let localAddress = self.localAddress {
+            if let hostname = localAddress.hostname, let port = localAddress.port {
+                configuration.address = .hostname(hostname, port: port)
+            } else if let pathname = localAddress.pathname {
+                configuration.address = .unixDomainSocket(path: pathname)
+            }
+        }
+
+        /// Log started message with the actual configuration.
+        configuration.logger.notice("Server started on \(configuration.addressDescription)")
+
+        self.configuration = configuration
+        self.didStart.withLockedValue { $0 = true }
+    }
+    
+    @available(*, noasync, message: "Use the async shutdown() method instead.")
     public func shutdown() {
         guard let connection = self.connection.withLockedValue({ $0 }) else {
             return
@@ -347,6 +373,24 @@ public final class HTTPServer: Server, Sendable {
         }
         self.configuration.logger.debug("HTTP server shutting down")
         self.didShutdown.withLockedValue { $0 = true }
+        // Make sure we remove the connection reference in case we want to start up again
+        self.connection.withLockedValue { $0 = nil }
+    }
+    
+    public func shutdown() async {
+        guard let connection = self.connection.withLockedValue({ $0 }) else {
+            return
+        }
+        self.configuration.logger.debug("Requesting HTTP server shutdown")
+        do {
+            try await connection.close(timeout: self.configuration.shutdownTimeout).get()
+        } catch {
+            self.configuration.logger.error("Could not stop HTTP server: \(error)")
+        }
+        self.configuration.logger.debug("HTTP server shutting down")
+        self.didShutdown.withLockedValue { $0 = true }
+        // Make sure we remove the connection reference in case we want to start up again
+        self.connection.withLockedValue { $0 = nil }
     }
 
     public var localAddress: SocketAddress? {
@@ -373,7 +417,8 @@ private final class HTTPServerConnection: Sendable {
     ) -> EventLoopFuture<HTTPServerConnection> {
         let quiesce = ServerQuiescingHelper(group: eventLoopGroup)
         let bootstrap = ServerBootstrap(group: eventLoopGroup)
-            /// Specify backlog and enable `SO_REUSEADDR` for the server itself.
+            /// Specify accepts per loop and backlog, and enable `SO_REUSEADDR` for the server itself.
+            .serverChannelOption(ChannelOptions.maxMessagesPerRead, value: configuration.connectionsPerServerTick)
             .serverChannelOption(ChannelOptions.backlog, value: Int32(configuration.backlog))
             .serverChannelOption(ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR), value: configuration.reuseAddress ? SocketOptionValue(1) : SocketOptionValue(0))
             
@@ -503,6 +548,20 @@ extension ChannelPipeline {
         let http2 = HTTP2FramePayloadToHTTP1ServerCodec()
         handlers.append(http2)
         
+        /// Add response compressor as configured.
+        handlers.append(configuration.responseCompression.makeCompressor())
+        
+        /// Add request decompressor if configured.
+        switch configuration.requestDecompression.storage {
+        case .enabled(let limit):
+            let requestDecompressionHandler = NIOHTTPRequestDecompressor(
+                limit: limit
+            )
+            handlers.append(requestDecompressionHandler)
+        case .disabled:
+            break
+        }
+        
         /// Add NIO → HTTP request decoder.
         let serverReqDecoder = HTTPServerRequestDecoder(
             application: application
@@ -548,16 +607,8 @@ extension ChannelPipeline {
             handlers.append(pipelineHandler)
         }
         
-        /// Add response compressor if configured.
-        switch configuration.responseCompression.storage {
-        case .enabled(let initialByteBufferCapacity):
-            let responseCompressionHandler = HTTPResponseCompressor(
-                initialByteBufferCapacity: initialByteBufferCapacity
-            )
-            handlers.append(responseCompressionHandler)
-        case .disabled:
-            break
-        }
+        /// Add response compressor as configured.
+        handlers.append(configuration.responseCompression.makeCompressor())
 
         /// Add request decompressor if configured.
         switch configuration.requestDecompression.storage {
@@ -608,6 +659,55 @@ extension NIOSSLServerHandler {
             self.init(context: context, customVerificationCallback: callback)
         } else {
             self.init(context: context)
+        }
+    }
+}
+
+// MARK: Response Compression Helpers
+extension HTTPServer.Configuration.ResponseCompressionConfiguration {
+    func makeCompressor() -> HTTPResponseCompressor {
+        HTTPResponseCompressor(initialByteBufferCapacity: storage.initialByteBufferCapacity) { [storage] responseHeaders, isCompressionSupported in
+            defer {
+                /// Always remove this marker header.
+                responseHeaders.headers.remove(name: .xVaporResponseCompression)
+            }
+            
+            /// If compression isn't supported, skip any further processing.
+            guard isCompressionSupported else { return .doNotCompress }
+            
+            /// If we allow overrides, check for the response compression marker header value first before making any further checks:
+            if storage.allowRequestOverrides, let responseCompressionHeader = responseHeaders.headers.responseCompression.value {
+                switch responseCompressionHeader {
+                case .enable: return .compressIfPossible
+                case .disable: return .doNotCompress
+                case .useDefault: break
+                }
+            }
+            
+            switch storage {
+            case .enabled(_, let disallowedTypes, _):
+                /// If there were no explicit overrides, fallback to checking the content type against the disallowed set. If any type succeeds the check, disable compression:
+                let shouldDisable = responseHeaders.headers.parseDirectives(name: .contentType).contains { contentTypeDirectives in
+                    guard let mediaType = HTTPMediaType(directives: contentTypeDirectives)
+                    else { return false }
+                    
+                    return disallowedTypes.contains(mediaType)
+                }
+                
+                /// Return `.doNotCompress` if compression should be disabled, or `.compressIfPossible` to allow it.
+                return shouldDisable ? .doNotCompress : .compressIfPossible
+            case .disabled(_, let allowedTypes, _):
+                /// If there were no explicit overrides, fallback to checking the content type against the allowed set. If all types succeed the check, enable compression:
+                let shouldEnable = responseHeaders.headers.parseDirectives(name: .contentType).allSatisfy { contentTypeDirectives in
+                    guard let mediaType = HTTPMediaType(directives: contentTypeDirectives)
+                    else { return false }
+                    
+                    return allowedTypes.contains(mediaType)
+                }
+                
+                /// Return `.compressIfPossible` if compression should be enabled, or `.doNotCompress` to disallow it.
+                return shouldEnable ? .compressIfPossible : .doNotCompress
+            }
         }
     }
 }

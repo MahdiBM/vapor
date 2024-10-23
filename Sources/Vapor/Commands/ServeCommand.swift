@@ -1,4 +1,5 @@
-@preconcurrency import Foundation
+@preconcurrency import Dispatch
+import Foundation
 import ConsoleKit
 import NIOConcurrencyHelpers
 
@@ -7,7 +8,7 @@ import NIOConcurrencyHelpers
 ///     $ swift run Run serve
 ///     Server starting on http://localhost:8080
 ///
-public final class ServeCommand: Command, Sendable {
+public final class ServeCommand: AsyncCommand, Sendable {
     public struct Signature: CommandSignature, Sendable {
         @Option(name: "hostname", short: "H", help: "Set the hostname the server will run on.")
         var hostname: String?
@@ -30,10 +31,10 @@ public final class ServeCommand: Command, Sendable {
         case incompatibleFlags
     }
 
-    /// See `Command`.
+    // See `AsyncCommand`.
     public let signature = Signature()
 
-    /// See `Command`.
+    // See `AsyncCommand`.
     public var help: String {
         return "Begins serving the app over HTTP."
     }
@@ -53,23 +54,23 @@ public final class ServeCommand: Command, Sendable {
         self.box = .init(box)
     }
 
-    /// See `Command`.
-    public func run(using context: CommandContext, signature: Signature) throws {
+    // See `AsyncCommand`.
+    public func run(using context: CommandContext, signature: Signature) async throws {
         switch (signature.hostname, signature.port, signature.bind, signature.socketPath) {
         case (.none, .none, .none, .none): // use defaults
-            try context.application.server.start(address: nil)
+            try await context.application.server.start(address: nil)
             
         case (.none, .none, .none, .some(let socketPath)): // unix socket
-            try context.application.server.start(address: .unixDomainSocket(path: socketPath))
+            try await context.application.server.start(address: .unixDomainSocket(path: socketPath))
             
         case (.none, .none, .some(let address), .none): // bind ("hostname:port")
             let hostname = address.split(separator: ":").first.flatMap(String.init)
             let port = address.split(separator: ":").last.flatMap(String.init).flatMap(Int.init)
             
-            try context.application.server.start(address: .hostname(hostname, port: port))
+            try await context.application.server.start(address: .hostname(hostname, port: port))
             
         case (let hostname, let port, .none, .none): // hostname / port
-            try context.application.server.start(address: .hostname(hostname, port: port))
+            try await context.application.server.start(address: .hostname(hostname, port: port))
             
         default: throw Error.incompatibleFlags
         }
@@ -85,6 +86,11 @@ public final class ServeCommand: Command, Sendable {
         // setup signal sources for shutdown
         let signalQueue = DispatchQueue(label: "codes.vapor.server.shutdown")
         func makeSignalSource(_ code: Int32) {
+            #if canImport(Darwin)
+            /// https://github.com/swift-server/swift-service-lifecycle/blob/main/Sources/UnixSignals/UnixSignalsSequence.swift#L77-L82
+            signal(code, SIG_IGN)
+            #endif
+            
             let source = DispatchSource.makeSignalSource(signal: code, queue: signalQueue)
             source.setEventHandler {
                 print() // clear ^C
@@ -92,13 +98,13 @@ public final class ServeCommand: Command, Sendable {
             }
             source.resume()
             box.signalSources.append(source)
-            signal(code, SIG_IGN)
         }
         makeSignalSource(SIGTERM)
         makeSignalSource(SIGINT)
         self.box.withLockedValue { $0 = box }
     }
 
+    @available(*, noasync, message: "Use the async asyncShutdown() method instead.")
     func shutdown() {
         var box = self.box.withLockedValue { $0 }
         box.didShutdown = true
@@ -106,6 +112,16 @@ public final class ServeCommand: Command, Sendable {
         if let server = box.server {
             server.shutdown()
         }
+        box.signalSources.forEach { $0.cancel() } // clear refs
+        box.signalSources = []
+        self.box.withLockedValue { $0 = box }
+    }
+    
+    func asyncShutdown() async {
+        var box = self.box.withLockedValue { $0 }
+        box.didShutdown = true
+        box.running?.stop()
+        await box.server?.shutdown()
         box.signalSources.forEach { $0.cancel() } // clear refs
         box.signalSources = []
         self.box.withLockedValue { $0 = box }

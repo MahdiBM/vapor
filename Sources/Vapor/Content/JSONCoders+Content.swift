@@ -2,6 +2,11 @@ import Foundation
 import NIOCore
 import NIOHTTP1
 
+#if swift(<6.0)
+extension Foundation.JSONEncoder: @unchecked Swift.Sendable {}
+extension Foundation.JSONDecoder: @unchecked Swift.Sendable {}
+#endif
+
 extension JSONEncoder: ContentEncoder {
     public func encode<E>(_ encodable: E, to body: inout ByteBuffer, headers: inout HTTPHeaders) throws
         where E: Encodable

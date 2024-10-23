@@ -2,7 +2,11 @@
 #if canImport(Darwin)
 @preconcurrency import Darwin
 #elseif canImport(Glibc)
+#if compiler(>=6.0)
+import Glibc
+#else
 @preconcurrency import Glibc
+#endif
 #elseif canImport(Musl)
 @preconcurrency import Musl
 #elseif canImport(WinSDK)
@@ -15,19 +19,10 @@ import NIOCore
 import NIOConcurrencyHelpers
 
 /// An internal helper that formats cookie dates as RFC1123
-private final class RFC1123 {
-    /// Thread-specific RFC1123
-    private static let thread: ThreadSpecificVariable<RFC1123> = .init()
-    
+private final class RFC1123: Sendable {
     /// A static RFC1123 helper instance
     static var shared: RFC1123 {
-        if let existing = thread.currentValue {
-            return existing
-        } else {
-            let new = RFC1123()
-            thread.currentValue = new
-            return new
-        }
+        .init()
     }
     
     /// The RFC1123 formatter
@@ -45,18 +40,18 @@ private final class RFC1123 {
     }
     
     func string(from date: Date) -> String {
-        return formatter.string(from: date)
+        self.formatter.string(from: date)
     }
     
     func date(from string: String) -> Date? {
-        return formatter.date(from: string)
+        self.formatter.date(from: string)
     }
 }
 
 extension Date {
     /// Formats a `Date` as RFC1123
     public var rfc1123: String {
-        return RFC1123.shared.string(from: self)
+        RFC1123.shared.string(from: self)
     }
     
     /// Creates a `Date` from an RFC1123 string
@@ -101,7 +96,7 @@ internal final class RFC1123DateCache: Sendable {
     }
     
     func currentTimestamp() -> String {
-        return self.cachedTimestampAndComponents.withLockedValue { $0.1 }
+        self.cachedTimestampAndComponents.withLockedValue { $0.1 }
     }
     
     /// Updates the current RFC 1123 date string.
@@ -187,3 +182,8 @@ private let stringNumbers = [
 ]
 
 private let secondsInDay = 60 * 60 * 24
+
+#if compiler(>=6.0)
+extension tm: @retroactive @unchecked Sendable {}
+#endif
+

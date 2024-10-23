@@ -18,12 +18,8 @@ jobs:
           - vapor/leaf
           - vapor/queues
           - vapor/apns
-        include:
-          - ref: main
-          - provider: vapor/apns
-            ref: 3.0.0
     runs-on: ubuntu-latest
-    container: swift:5.9-jammy
+    container: swift:6.0
     steps: 
       - name: Check out Vapor
         uses: actions/checkout@v4
@@ -34,7 +30,6 @@ jobs:
         with: 
           repository: ${{ matrix.provider }}
           path: provider
-          ref: ${{ matrix.ref }}
       - name: Use local Vapor
         run: swift package --package-path ./provider edit vapor --path ./vapor
       - name: Run tests
@@ -43,6 +38,63 @@ jobs:
         run: swift test --package-path ./provider
 
   unit-tests:
-     uses: vapor/ci/.github/workflows/run-unit-tests.yml@main
-     with:
-       with_tsan: false
+    uses: vapor/ci/.github/workflows/run-unit-tests.yml@main
+    with:
+      with_tsan: false
+      with_musl: true
+      extra_musl_flags: --target Vapor
+      ios_xcodebuild_action: ''
+      ios_scheme_name: Vapor
+    secrets: inherit
+
+  test-parallel:
+    if: ${{ !(github.event.pull_request.draft || false) }}
+    runs-on: ubuntu-latest
+    container: swift:6.0
+    steps:
+      - name: Check out Vapor
+        uses: actions/checkout@v4
+      - name: Run tests
+        run: swift test --parallel
+
+  run-codeql: 
+    if: ${{ !(github.event.pull_request.draft || false) }}
+    permissions: { security-events: write, packages: read, actions: read, contents: read }
+    strategy:
+      fail-fast: false
+      matrix:
+        language:
+          - c-cpp
+          - swift
+        runner:
+          - macos-14
+          - ubuntu-22.04
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Select latest stable Xcode
+        if: ${{ contains(matrix.runner, 'macos') }}
+        uses: maxim-lobanov/setup-xcode@v1
+        with: { xcode-version: latest-stable }
+      - name: Install Swift toolchain
+        if: ${{ contains(matrix.runner, 'ubuntu') }}
+        uses: vapor/swiftly-action@v0.1
+        with: { toolchain: latest }
+      - name: Check out Vapor
+        uses: actions/checkout@v4
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: manual
+      - name: Build code
+        run: |
+          if [[ '${{ matrix.language }}' == 'c-cpp' ]]; then
+            swift build --target CVaporBcrypt
+          else
+            swift build --target Vapor
+            swift build --target XCTVapor
+          fi
+      - name: Run CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
